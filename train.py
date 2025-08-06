@@ -131,6 +131,7 @@ def main():
     val_keys,   val_labels,   val_flags   = make_entries(val_idx,   augment=False)
     test_keys,  test_labels,  test_flags  = make_entries(test_idx,  augment=False)
 
+
     # transforms
     norm = transforms.Normalize([0.485,0.456,0.406],
                                 [0.229,0.224,0.225])
@@ -169,9 +170,23 @@ def main():
                               shuffle=False, num_workers=args.num_workers,
                               pin_memory=pin)
 
-    print(f"Train: {len(train_ds)} patches (with augmentation)")
-    print(f"Val:   {len(val_ds)} patches")
-    print(f"Test:  {len(test_ds)} patches")
+    train_labels_arr = np.array(train_labels)
+    val_labels_arr   = np.array(val_labels)
+    test_labels_arr  = np.array(test_labels)
+
+    train_norm = int((train_labels_arr == 0).sum())
+    train_tum  = int((train_labels_arr == 1).sum())
+    val_norm   = int((val_labels_arr   == 0).sum())
+    val_tum    = int((val_labels_arr   == 1).sum())
+    test_norm  = int((test_labels_arr  == 0).sum())
+    test_tum   = int((test_labels_arr  == 1).sum())
+
+    print(f"Train: {len(train_ds)} patches "
+        f"(normal={train_norm}, tumor={train_tum})")
+    print(f"Val:   {len(val_ds)} patches "
+        f"(normal={val_norm}, tumor={val_tum})")
+    print(f"Test:  {len(test_ds)} patches "
+        f"(normal={test_norm}, tumor={test_tum})")
 
 
     # model
