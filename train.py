@@ -12,6 +12,7 @@ from collections import defaultdict
 import lmdb
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
@@ -59,6 +60,34 @@ class LMDBAugDataset(Dataset):
     def __del__(self):
         if self.env is not None:
             self.env.close()
+
+class FocalLoss(nn.Module):
+    """
+    Focal Loss, as in https://arxiv.org/abs/1708.02002
+      - weight: 1D tensor of shape [num_classes], class-weights
+      - gamma: focusing parameter (>=0), higher => focus on hard examples
+    """
+    def __init__(self, weight=None, gamma: float = 2.0, reduction='mean'):
+        super().__init__()
+        self.weight    = weight
+        self.gamma     = gamma
+        self.reduction = reduction
+
+    def forward(self, logits, targets):
+        # standard CE per-sample
+        ce = F.cross_entropy(logits, targets, weight=self.weight, reduction='none')
+        # pt = probability of true class
+        pt = torch.exp(-ce)
+        # focal term
+        loss = (1 - pt) ** self.gamma * ce
+        if self.reduction == 'mean':
+            return loss.mean()
+        elif self.reduction == 'sum':
+            return loss.sum()
+        return loss
+
+    
+
 
 
 def main():
@@ -196,7 +225,13 @@ def main():
         model = nn.DataParallel(model)
     model.to(device)
 
-    criterion = nn.CrossEntropyLoss()
+    # compute inverse-frequency class weights
+    class_counts  = torch.tensor([train_norm, train_tum], dtype=torch.float)
+    class_weights = class_counts.sum() / class_counts
+    class_weights = class_weights.to(device)
+
+    # use focal loss 
+    criterion = FocalLoss(weight=class_weights, gamma=2.0)
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', factor=0.5, patience=3
