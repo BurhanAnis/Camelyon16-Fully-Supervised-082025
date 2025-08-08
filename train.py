@@ -88,8 +88,6 @@ class FocalLoss(nn.Module):
 
     
 
-
-
 def main():
     parser = argparse.ArgumentParser(
         description='Train DL model on WSI patches with train/val/test splits'
