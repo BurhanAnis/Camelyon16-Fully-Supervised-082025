@@ -181,13 +181,35 @@ def main():
                               shuffle=False, num_workers=args.num_workers)
     test_loader  = DataLoader(test_ds,  batch_size=args.batch_size,
                               shuffle=False, num_workers=args.num_workers)
+    
+    train_labels_arr = np.array(train_labels)
+    val_labels_arr   = np.array(val_labels)
+    test_labels_arr  = np.array(test_labels)
+
+    train_norm = int((train_labels_arr == 0).sum())
+    train_tum  = int((train_labels_arr == 1).sum())
+    val_norm   = int((val_labels_arr   == 0).sum())
+    val_tum    = int((val_labels_arr   == 1).sum())
+    test_norm  = int((test_labels_arr  == 0).sum())
+    test_tum   = int((test_labels_arr  == 1).sum())
+
+    print(f"Train: {len(train_ds)} patches "
+        f"(normal={train_norm}, tumor={train_tum})")
+    print(f"Val:   {len(val_ds)} patches "
+        f"(normal={val_norm}, tumor={val_tum})")
+    print(f"Test:  {len(test_ds)} patches "
+        f"(normal={test_norm}, tumor={test_tum})")
 
     # counts & weights
-    train_counts = np.bincount(train_labels)
-    class_weights = torch.tensor(sum(train_counts)/train_counts, device=device, dtype=torch.float)
+    base_counts = np.bincount(labels[train_idx])
+    class_weights = torch.tensor(
+        base_counts.sum() / base_counts,
+        device=device, dtype=torch.float
+    )
+    print(f"Class weights (normal, tumor): {class_weights.tolist()}")
 
     # model
-    model = models.resnet50(weights=False)
+    model = models.resnet50(weights=None)
     model.fc = nn.Linear(model.fc.in_features, 2)
     model.to(device)
     if torch.cuda.device_count()>1:
@@ -216,7 +238,7 @@ def main():
             # per-sample focal loss
             ce = F.cross_entropy(logits, lbls, weight=class_weights, reduction='none')
             pt = torch.exp(-ce)
-            losses = (1-pt)**criterion.gamma * ce
+            losses = criterion(logits, lbls)
 
             # masks
             pos_mask = lbls==1
