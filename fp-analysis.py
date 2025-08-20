@@ -5,6 +5,7 @@ import os
 import pickle
 from collections import defaultdict
 from typing import Dict, List, Tuple
+import umap.umap_ as umap
 
 import lmdb
 import numpy as np
@@ -226,22 +227,26 @@ def extract_embeddings_for_keys(
 def run_pca_and_hdbscan(
     embeds: np.ndarray,
     pca_dims_for_cluster: int = 50,
-    pca_dims_for_plot: int = 2,
+    pca_dims_for_plot: int = 2,   # kept but unused for viz now
     min_cluster_size: int = 25,
-    min_samples: int = None
+    min_samples: int = None,
+    umap_neighbors: int = 15,
+    umap_min_dist: float = 0.1,
+    umap_metric: str = "euclidean",
+    umap_seed: int = 42,
 ):
     """
     Standardize -> PCA (for clustering) -> HDBSCAN.
-    Also make a 2D PCA projection for plotting.
+    Also compute a 2D UMAP projection for plotting.
     """
     scaler = StandardScaler(with_mean=True, with_std=True)
     Z = scaler.fit_transform(embeds)
 
-    # PCA for clustering
+    # PCA for clustering (stable, fast)
     pca_cluster = PCA(n_components=min(pca_dims_for_cluster, Z.shape[1]))
     Zc = pca_cluster.fit_transform(Z)
 
-    # HDBSCAN clustering
+    # HDBSCAN clustering on PCA-reduced features
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=min_cluster_size,
         min_samples=min_samples,
@@ -249,23 +254,29 @@ def run_pca_and_hdbscan(
         cluster_selection_method="eom"
     )
     labels = clusterer.fit_predict(Zc)
-    # outlier scores / probabilities
     probs = clusterer.probabilities_
     outlier_scores = getattr(clusterer, "outlier_scores_", np.zeros_like(probs))
 
-    # 2D PCA for visualization
-    pca_plot = PCA(n_components=min(pca_dims_for_plot, Z.shape[1]))
-    Z2 = pca_plot.fit_transform(Z)
+    # UMAP(2) for visualization on standardized features
+    umap_2d = umap.UMAP(
+        n_neighbors=umap_neighbors,
+        min_dist=umap_min_dist,
+        metric=umap_metric,
+        random_state=umap_seed,
+        n_components=2,
+        verbose=False,
+    )
+    Z2 = umap_2d.fit_transform(Z)
 
     return {
         "Zc": Zc,
         "labels": labels,
         "probs": probs,
         "outlier_scores": outlier_scores,
-        "Z2": Z2,
-        "pca_cluster": pca_cluster,
-        "pca_plot": pca_plot,
+        "Z2": Z2,                   # UMAP(2) now
         "scaler": scaler,
+        "pca_cluster": pca_cluster,
+        "umap_2d": umap_2d,         # save the UMAP model
         "clusterer": clusterer,
     }
 
@@ -287,17 +298,16 @@ def save_cluster_csv(out_csv, fp_meta, labels, probs, outlier_scores):
     return df
 
 
-def plot_pca2_scatter(Z2, labels, out_png):
+def plot_umap_scatter(Z2, labels, out_png):
     plt.figure(figsize=(7, 6))
-    # HDBSCAN uses -1 for noise
     unique = np.unique(labels)
     for lab in unique:
         mask = labels == lab
         plt.scatter(Z2[mask, 0], Z2[mask, 1], s=10, alpha=0.7, label=f"Cluster {lab}")
     plt.legend(markerscale=2, fontsize=8)
-    plt.xlabel("PCA 1")
-    plt.ylabel("PCA 2")
-    plt.title("False Positives — PCA(2) with HDBSCAN labels")
+    plt.xlabel("UMAP 1")
+    plt.ylabel("UMAP 2")
+    plt.title("False Positives — UMAP(2) with HDBSCAN labels")
     plt.tight_layout()
     plt.savefig(out_png, dpi=200)
     plt.close()
@@ -345,10 +355,14 @@ def main():
     parser.add_argument("--slide_index_test", type=str, default="slide_index_test.pkl", help="slide_index_test.pkl produced by training script.")
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--pca_dims", type=int, default=50, help="PCA dims for clustering.")
-    parser.add_argument("--min_cluster_size", type=int, default=10000)
+    parser.add_argument("--min_cluster_size", type=int, default=100)
     parser.add_argument("--min_samples", type=int, default=None)
     parser.add_argument("--out_dir", type=str, default="fp_cluster_analysis")
     parser.add_argument("--save_thumbnails", action="store_true", help="Save per-cluster contact sheets.")
+    parser.add_argument("--umap_neighbors", type=int, default=15, help="UMAP n_neighbors for 2D viz.")
+    parser.add_argument("--umap_min_dist", type=float, default=0.1, help="UMAP min_dist for 2D viz.")
+    parser.add_argument("--umap_metric", type=str, default="euclidean", help="UMAP metric for 2D viz.")
+    parser.add_argument("--umap_seed", type=int, default=42, help="UMAP random_state for determinism.")
     args = parser.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
@@ -394,7 +408,11 @@ def main():
         pca_dims_for_cluster=args.pca_dims,
         pca_dims_for_plot=2,
         min_cluster_size=args.min_cluster_size,
-        min_samples=args.min_samples
+        min_samples=args.min_samples,
+        umap_neighbors=args.umap_neighbors,
+        umap_min_dist=args.umap_min_dist,
+        umap_metric=args.umap_metric,
+        umap_seed=args.umap_seed,
     )
 
     # --- Save outputs ---
@@ -408,8 +426,8 @@ def main():
     print(f"Saved cluster assignments to {os.path.join(args.out_dir, 'false_positive_clusters.csv')}")
 
     # 2D PCA scatter
-    plot_pca2_scatter(results["Z2"], results["labels"], os.path.join(args.out_dir, "pca2_hdbscan.png"))
-    print(f"Saved PCA(2) scatter with HDBSCAN labels to {os.path.join(args.out_dir, 'pca2_hdbscan.png')}")
+    plot_umap_scatter(results["Z2"], results["labels"], os.path.join(args.out_dir, "umap_hdbscan.png"))
+    print(f"Saved UMAP(2) scatter with HDBSCAN labels to {os.path.join(args.out_dir, 'umap_hdbscan.png')}")
 
     # Optional thumbnails per cluster
     if args.save_thumbnails:
@@ -418,11 +436,11 @@ def main():
         print(f"Saved per-cluster thumbnails in {thumbs_dir}")
 
     # Persist PCA/HDBSCAN objects for reproducibility
-    with open(os.path.join(args.out_dir, "pca_hdbscan_artifacts.pkl"), "wb") as f:
+    with open(os.path.join(args.out_dir, "dimred_hdbscan_artifacts.pkl"), "wb") as f:
         pickle.dump({
             "scaler": results["scaler"],
             "pca_cluster": results["pca_cluster"],
-            "pca_plot": results["pca_plot"],
+            "umap_2d": results["umap_2d"],
             "clusterer": results["clusterer"]
         }, f)
 
