@@ -38,7 +38,18 @@ class LMDBTestDataset(Dataset):
 def load_model(checkpoint_path, device):
     model = models.resnet50(weights=None)
     model.fc = torch.nn.Linear(model.fc.in_features, 2)
-    model.load_state_dict(torch.load(checkpoint_path, map_location=device))
+
+    # Load checkpoint and strip "module." prefix if needed
+    state_dict = torch.load(checkpoint_path, map_location=device)
+    if any(k.startswith("module.") for k in state_dict.keys()):
+        from collections import OrderedDict
+        new_state_dict = OrderedDict()
+        for k, v in state_dict.items():
+            new_key = k.replace("module.", "")
+            new_state_dict[new_key] = v
+        state_dict = new_state_dict
+
+    model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
     return model
