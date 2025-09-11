@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, models
 
-from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam import GradCAM, GradCAMPlusPlus
 from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
@@ -226,7 +226,8 @@ def main():
 
     # Grad-CAM setup
     target_layers = [model.layer4[-1]]
-    cam = GradCAM(model=model, target_layers=target_layers)
+    cam = GradCAMPlusPlus(model=model, target_layers=target_layers)
+
 
     # Cached preds
     cached_lookup = {}
@@ -346,7 +347,7 @@ def main():
                 'true_label': true_label,
                 'pred': pred,
                 'prob': prob,
-                'path': str(out_file)
+                'path': str(out_file.relative_to(output_path))
             })
 
     # Save outputs
